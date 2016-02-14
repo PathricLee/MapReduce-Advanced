@@ -1,0 +1,1458 @@
+Task 1 code begin
+###################################################################
+#Mapper 
+###################################################################
+#!/usr/bin/python
+import os
+import sys
+
+def main():
+	counter = 0
+	file_name = os.environ["mapreduce_map_input_file"]
+	#file_name = '~/ExtremeComputing/ex1/1_part/1_task/small/d1.txt'
+	file_name = file_name.split("/")[-1]
+        for line in sys.stdin:
+                line = line.strip()
+		for word in line.split():
+			emit(word, file_name)
+
+def emit(word, file_name):
+	print (word + '\t' + file_name + '\t' + '1')
+
+#main() func is a recurring feature in all my code
+#I like functions better than running the code like a script
+#More readable for a human
+if __name__ == '__main__':
+        main()
+
+###################################################################
+#combiner
+###################################################################
+#!/usr/bin/python
+import os
+import sys
+
+#Combiner implemented to sum up on a file name level
+def main():
+	prev_file_name = ''
+	prev_word = ''
+	count = 0
+        for line in sys.stdin:
+                line = line.strip()
+		word, file_name,_ = line.split('\t')
+		if word==prev_word:
+			if file_name == prev_file_name:
+				count +=1
+			else:
+				if prev_file_name:
+					emit(word, prev_file_name, count)
+				#reset the params
+				prev_file_name = file_name
+				count =1
+		else:
+			if prev_word:
+				emit(prev_word, prev_file_name, count)
+			#reset the params
+			prev_word = word
+			prev_file_name = file_name
+			count = 1
+	#emit the last line
+	emit (prev_word,prev_file_name, count)
+
+def emit(word, file_name, count):
+	print (word + '\t' + file_name + '\t' + str(count))
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+#reducer
+###################################################################
+#!/usr/bin/python
+
+import sys
+
+def main():
+	prev_word = ''
+	prev_file_name = ''
+        for line in sys.stdin:
+		line = line.strip()
+		word,file_name, count = line.split('\t') 
+		count = int(count)
+		if prev_word == word:
+			if prev_file_name == file_name:
+				file_count_hash_map[file_name] += count
+			else:
+				file_count_hash_map[file_name] = count
+				prev_file_name = file_name
+			total_count += count
+		else:
+			if prev_word:
+				emit(prev_word, total_count, file_count_hash_map)
+			#reset the counters
+			file_count_hash_map = {}
+			total_count = count
+			file_count_hash_map[file_name] = count
+			prev_file_name = file_name
+			prev_word = word	
+	#last words
+	emit(prev_word, total_count, file_count_hash_map)
+
+def construct_file_string(file_name, file_word_count):
+	return '('+ file_name +', ' + str(file_word_count) + ')'
+
+def emit(word, count, file_count_hash_map):
+	delim = ' :\t'
+	emit_str = word + delim + str(count) + delim + '{'
+	#implements a dict sort
+	#Assumption: the dictionary is not going to be longer than the list of files
+	#so it should be small enough to sort in memory
+	for file_name in sorted(file_count_hash_map):
+		emit_str += construct_file_string(file_name, file_count_hash_map[file_name])
+		emit_str += ', '
+	emit_str = emit_str.rstrip(', ')
+	emit_str += '}' 
+	print emit_str
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Bash script for Hadoop commands
+# Output from Task 1 will be saved for Task 2
+# Two Mapreduce jobs used here. The first one creates the tf idf
+# data. But uses multiple reducers. The second one simply sorts the
+# output and puts it into a single file. This was done as it was
+# deemed that a single sorted index file was a requirement for this
+# task. 
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=1
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/large/
+RE_INP_DIR=$HDP_DIR/input/ex2/1_task
+OUT_DIR=$HDP_DIR/output
+OUT_DIR_2=$HDP_DIR/output_2
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+hdfs dfs -rm -R $OUT_DIR_2
+
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapTfIndex.py \
+ -file mapTfIndex.py \
+ -reducer reduceTfIndex.py \
+ -file reduceTfIndex.py \
+ -combiner combineTfIndex.py \
+ -file combineTfIndex.py \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID"
+
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -D mapred.reduce.tasks=1 \
+ -D mapreduce.job.output.key.comparator.class=org.apache.hadoop.mapreduce.lib.partition.KeyFieldBasedComparator \
+ -D stream.num.map.output.key.fields=1 \
+ -D num.key.fields.for.partition=1 \
+ -D mapreduce.partition.keypartitioner.options=-k1,1 \
+ -D mapreduce.partition.keycomparator.options='-k1n' \
+ -input $OUT_DIR \
+ -output $OUT_DIR_2 \
+ -mapper cat \
+ -reducer cat
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR_2 $LOCAL_DIR
+
+hdfs dfs -rm $RE_INP_DIR/*
+hdfs dfs -cp $OUT_DIR_2/part* $RE_INP_DIR
+
+#copy the output to task dir
+hdfs dfs -rm $TASK_DIR/*
+hdfs dfs -cp $OUT_DIR_2/* $TASK_DIR
+
+echo "Done. check local output directory"
+
+Task 1 code end
+
+Task 1 results begin
+0 :	2 :	{(d11.txt, 2)}
+"'Are :	1 :	{(d15.txt, 1)}
+"'Bah! :	1 :	{(d15.txt, 1)}
+"'Blanked :	1 :	{(d2.txt, 1)}
+"'Haven't :	1 :	{(d15.txt, 1)}
+"'Here's :	1 :	{(d15.txt, 1)}
+"'If :	8 :	{(d15.txt, 6), (d2.txt, 1), (d3.txt, 1)}
+"'Kelly, :	1 :	{(d2.txt, 1)}
+"'Larby :	2 :	{(d12.txt, 2)}
+"'Madame----' :	1 :	{(d15.txt, 1)}
+Task 1 results end
+
+Task 2 code begin
+
+###################################################################
+#Mapper
+###################################################################
+#!/usr/bin/python
+import sys
+
+def main():
+	#prepare the terms list
+	terms = []
+	term_file_name = 'terms.txt'
+	for line in file(term_file_name):
+		terms.append(line.strip())
+
+
+        for line in sys.stdin:
+                line = line.rstrip('\n')
+		word = line.split(':\t')[0].strip()
+		if word in terms:
+			print line
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer
+###################################################################
+#!/usr/bin/python
+
+import sys
+import math
+
+marked_file_name = 'd1.txt'
+
+def main():
+	terms_file  = 'terms.txt'
+	terms = []
+	for line in file(terms_file):
+		terms.append(line.strip())
+	terms_seen = []
+        for line in sys.stdin:
+		num_files= 0
+		tf_frequency = 0
+		line = line.rstrip('\n')
+		word, total_count, index_map = line.split(':')
+		word = word.strip()
+		#removing all the chars not required to break down this token further
+		index_map = index_map.replace('{','').replace('}','').replace('(','')
+		for file_index in index_map.split('),'):
+			file_name, count = file_index.split(',')
+			file_name = file_name.strip()
+			num_files+=1
+			if file_name == marked_file_name:
+				tf_frequency = int(count.replace(')','').strip())
+		idf_term = calc_idf(num_files)
+		tf_idf_score = tf_frequency * idf_term
+		terms_seen.append(word)
+		emit(word, marked_file_name, tf_idf_score)
+	
+	#this will emit a zero score for any term which has not been encountered
+	for term in terms:
+		if term not in terms_seen:
+			emit(term, marked_file_name, 0.0)
+
+def calc_idf(num_files):
+	''' calculate the idf value for the term based on the number of files in which its found '''
+	N = 17.0
+	return math.log10(N/(1+num_files))
+
+def emit(word, file_name, tf_idf_score):
+	''' print out the tf score for the terms to std out in the format required '''
+	print word + ', ' + file_name + ' = ' + str(tf_idf_score)
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Bash script to run hadoop commands
+# Specifying a single reducer as:
+#	1. We want a unique list
+#	2. The input from the mapper is small enough that it should
+#		not matter
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=2
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/1_task
+OUT_DIR=$HDP_DIR/output
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -D mapred.reduce.tasks=1 \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapTfScore.py \
+ -file mapTfScore.py \
+ -reducer reduceTfScore.py \
+ -file reduceTfScore.py \
+ -file terms.txt \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID"
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR $LOCAL_DIR
+
+#hdfs dfs -rm $RE_INP_DIR/*
+#hdfs dfs -cp $OUT_DIR/part* $RE_INP_DIR
+
+#copy the output to task dir
+hdfs dfs -rm $TASK_DIR/*
+hdfs dfs -cp $OUT_DIR/* $TASK_DIR
+
+echo "Done. check local output directory"
+
+Task 2 code end
+
+Task 2 results begin
+Lassiter, d1.txt = 0.0	
+agreement, d1.txt = 0.531478917042	
+child, d1.txt = 6.524311868	
+family, d1.txt = 1.14151090877	
+horse, d1.txt = 2.57155048062	
+monument, d1.txt = 0.62838893005	
+electronic, d1.txt = 0.0	
+Task 2 results end
+
+Task 3.1 code begin
+###################################################################
+# The first map reduce job will produce an output which will be 
+# used for both Tasks 3.1 and 3.2
+# It essentially combines the summation which is required for 
+# both tasks. Tasks 3.1 and 3.2 will then use this output 
+# to produce the top 1 and top 10 lists
+###################################################################
+
+###################################################################
+# Mapper for the Common job
+###################################################################
+#!/usr/bin/python
+import sys
+import re
+
+#this job will aggregate the number of site visits and http error codes
+#will be used for task 3.1 and 3.2
+def main():
+        for line in sys.stdin:
+		site_counter = 1
+                line = line.strip()
+		#regex below describes the apace log file format
+		log_content = map(''.join, re.findall(r'\"(.*?)\"|\[(.*?)\]|(\S+)', line))
+		try:
+			#Log content details######
+			host = log_content[0]
+			#req_time = log_content[3]
+			http_code = log_content[5]
+			if http_code == '404':
+				emit('HTTP_ERROR: ' + host)
+			try:
+				req_type, req_site, protocol = log_content[4].split()
+			except:
+				#format issue observed here
+				req_type, req_site = log_content[4].split()
+			##########################
+			emit('SITE: ' + req_site)
+		except:
+			#in case of format issues, we skip this line
+			pass
+
+def emit(token):
+	aggregate_token = 'LongValueSum: '
+	print aggregate_token + token + '\t' + '1'
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer and combiner for this job are just hadoop aggregate funcs
+###################################################################
+
+###################################################################
+# Bash script containing hadoop commands for the commmon job
+# Reducer and combiner are using hadoop aggregate command
+# Output will be saved in a folder for use in 3.1 and 3.2
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=3
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/logsLarge.txt
+RE_INP_DIR=$HDP_DIR/input/ex2/3_task
+OUT_DIR=$HDP_DIR/output
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapAggregate.py \
+ -file mapAggregate.py \
+ -combiner aggregate \
+ -reducer aggregate \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID"
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR $LOCAL_DIR
+
+hdfs dfs -rm $RE_INP_DIR/*
+hdfs dfs -cp $OUT_DIR/part* $RE_INP_DIR
+
+echo "Done. check local output directory"
+
+###################################################################
+# Mapper for task 3.1
+# Uses results from previous job
+# It maintains a list of top sites to check if there are more
+# than 1 SITE which has the same top count. If yes, will print both
+###################################################################
+#!/usr/bin/python
+import sys
+import re
+
+#This will identify the top site inside this mapper
+#only sends a single value to the reducer. so limiting the amount sent to reducer
+def main():
+	top_site_list = []
+	top_site_count = 0
+        for line in sys.stdin:
+                line = line.strip()
+		keyword, site, count = line.split()
+		count = int(count)
+		if keyword.strip() == 'SITE:':
+			if count > top_site_count:
+				top_site_list = []
+				top_site_list.append(site)
+				top_site_count = count
+			elif count == top_site_count:
+				top_site_list.append(site)
+
+	emit(top_site_list, top_site_count)
+
+def emit(top_site_list, top_site_count):
+	for site in top_site_list:
+		print site + '\t' + str(top_site_count)
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer for task 3.1. Finds the top 1 SITE
+# It maintains a list of top sites to check if there are more
+# than 1 SITE which has the same top count. If yes, will print both
+###################################################################
+#!/usr/bin/python
+
+import sys
+
+def main():
+	top_site_list = []
+	top_site_count = 0
+        for line in sys.stdin:
+		line = line.strip()
+		site, count = line.split()
+		count = int(count)
+		if count > top_site_count:
+			top_site_list = []
+			top_site_list.append(site)
+			top_site_count = count
+		elif count == top_site_count:
+			top_site_list.append(site)
+		
+	emit(top_site_list, top_site_count)
+
+#handles the case where more than one site is top
+def emit(top_site_list, top_site_count):
+	for site in top_site_list:
+		print site + '\t' + str(top_site_count)
+
+if __name__ == '__main__':
+        main()
+
+Task 3.1 code end
+
+Task 3.1 results begin
+/images/NASA-logosmall.gif	97392
+Task 3.1 results end
+
+Task 3.2 code begin
+###################################################################
+# Mapper - uses output from common job for task 3.1 and 3.2
+###################################################################
+#!/usr/bin/python
+import sys
+import re
+
+#This will identify the top site inside this mapper
+#only sends a single value to the reducer. so limiting the amount sent to reducer
+def main():
+	err_host_dict = {}
+        for line in sys.stdin:
+                line = line.strip()
+		keyword, host, count = line.split()
+		count = int(count)
+		if keyword.strip() == 'HTTP_ERROR:':
+			if len(err_host_dict.keys()) < 10:
+				err_host_dict[host] = count
+			elif count >= min(err_host_dict.values()):
+				del err_host_dict[min(err_host_dict.items(), key=lambda x: x[1])[0]]
+				err_host_dict[host] = count
+	emit(err_host_dict)
+
+def emit(err_host_dict):
+	for item in err_host_dict.keys():
+		print item + '\t' + str(err_host_dict[item])
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer - will run on a single reducer
+# Works because input from mapper is very small and manageble
+###################################################################
+#!/usr/bin/python
+import sys
+import re
+
+def main():
+	err_host_dict = {}
+        for line in sys.stdin:
+                line = line.strip()
+		host, count = line.split()
+		count = int(count)
+		if len(err_host_dict.keys()) < 10:
+			err_host_dict[host] = count
+		elif count >= min(err_host_dict.values()):
+			del err_host_dict[min(err_host_dict.items(), key=lambda x: x[1])[0]]
+			err_host_dict[host] = count
+	emit(err_host_dict)
+
+def emit(err_host_dict):
+	for item in err_host_dict.keys():
+		print item + '\t' + str(err_host_dict[item])
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Bash script to run hadoop commands
+# Runs on a single reducer cause output from mapper is small
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=3.2
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/3_task
+OUT_DIR=$HDP_DIR/output
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+
+#running this on a single reducer to get the final output
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -D mapred.reduce.tasks=1 \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapHttpErrors.py \
+ -file mapHttpErrors.py \
+ -reducer reduceHttpErrors.py \
+ -file reduceHttpErrors.py \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID"
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR $LOCAL_DIR
+
+#hdfs dfs -rm $RE_INP_DIR/*
+#hdfs dfs -cp $OUT_DIR/part* $RE_INP_DIR
+
+#copy the output to task dir
+hdfs dfs -rm $TASK_DIR/*
+hdfs dfs -cp $OUT_DIR/* $TASK_DIR
+
+echo "Done. check local output directory"
+
+Task 3.2 code end
+
+Task 3.2 results begin
+scooter.pa-x.dec.com	35
+155.148.25.4	44
+ts8-1.westwood.ts.ucla.edu	37
+204.62.245.32	37
+nexus.mlckew.edu.au	37
+dialip-217.den.mmc.com	62
+piweba3y.prodigy.com	47
+gate.barr.com	38
+maz3.maz.net	39
+m38-370-9.mit.edu	37
+Task 3.2 results end
+
+Task 3.3 code begin
+
+###################################################################
+# Mapper
+# Converts the date to datetime, then formats it to YYYYMMDDHHMMSS
+# format to make it sortable. This way, reducer only has to look
+# at first and last timestamps of every host and not maintain a 
+# list of any sort to find the min, max
+###################################################################
+#!/usr/bin/python
+import sys
+import datetime
+import re
+
+def main():
+        for line in sys.stdin:
+		site_counter = 1
+                line = line.strip()
+		#regex below describes the apace log file format
+		log_content = map(''.join, re.findall(r'\"(.*?)\"|\[(.*?)\]|(\S+)', line))
+		if len( log_content) == 7:
+			try:
+				host = log_content[0]
+				req_time = log_content[3]
+				req_time = req_time.split()[0] #throwing away the timezone info as we assume all timezones are same
+				host_time = datetime.datetime.strptime(req_time,  "%d/%b/%Y:%H:%M:%S" )
+				host_time_string = host_time.strftime("%Y%m%d%H%M%S")
+				emit(host, host_time_string)
+			except:
+				#in case of format issues, we skip this line
+				pass
+
+def emit(host, req_time):
+	print host + '\t' + req_time
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer - mapper output is sorted on first and second tokens
+# So for a given host, the first time token recd will be min
+# and the last time token recd will be max
+# Saves us from maintaining a list
+###################################################################
+#!/usr/bin/python
+import sys
+import datetime
+
+def main():
+	prev_host = ''
+	num_visits = 0
+        for line in sys.stdin:
+		line = line.strip()
+		host, req_time = line.split()
+		host_time = datetime.datetime.strptime(req_time, "%Y%m%d%H%M%S")
+		if host == prev_host:
+			max_host_time = host_time
+			num_visits +=1
+		else:
+			if prev_host:
+				emit_time_diff(prev_host, min_host_time, max_host_time, num_visits)
+			#reset the params
+			min_host_time = max_host_time = host_time
+			prev_host = host
+			num_visits = 0
+	#last line
+	emit_time_diff(prev_host, min_host_time, max_host_time, num_visits)
+
+def emit_time_diff(host, min_host_time, max_host_time, num_visits):
+	if num_visits == 0:
+		#converting it back to the original date format
+		print host + '\t' + min_host_time.strftime("%d/%b/%Y:%H:%M:%S") + " -0400"
+	else:
+		time_diff = max_host_time - min_host_time
+		print host + '\t' + str(time_diff.total_seconds())
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Bash script to run hadoop commands
+# Will perform secondary sort on column 2 as well to ensure reducer
+# sees sorted output on both columns to work properly
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=3.3
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/logsLarge.txt
+OUT_DIR=$HDP_DIR/output
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+
+#running this on a single reducer to get the final output
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -D mapred.reduce.tasks=3 \
+ -D mapreduce.job.output.key.comparator.class=org.apache.hadoop.mapreduce.lib.partition.KeyFieldBasedComparator \
+ -D stream.num.map.output.key.fields=2 \
+ -D num.key.fields.for.partition=1 \
+ -D mapreduce.partition.keypartitioner.options=-k1,2 \
+ -D mapreduce.partition.keycomparator.options="-k1,1 -k2,2n" \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapReqTime.py \
+ -file mapReqTime.py \
+ -reducer reduceReqTime.py \
+ -file reduceReqTime.py \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID" \
+ -partitioner org.apache.hadoop.mapred.lib.KeyFieldBasedPartitioner
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR $LOCAL_DIR
+
+#hdfs dfs -rm $RE_INP_DIR/*
+#hdfs dfs -cp $OUT_DIR/part* $RE_INP_DIR
+
+#copy the output to task dir
+hdfs dfs -rm $TASK_DIR/*
+hdfs dfs -cp $OUT_DIR/* $TASK_DIR
+
+echo "Done. check local output directory"
+
+Task 3.3 code end
+
+Task 3.3 results begin
+001.msy4.communique.net	17.0
+007.thegap.com	19.0
+01-dynamic-c.wokingham.luna.net	2833.0
+0321jona.jon.rpslmc.edu	7708.0
+04-dynamic-c.wokingham.luna.net	8.0
+10.ts2.mnet.medstroms.se	230.0
+12-102md.acs.calpoly.edu	1112.0
+12-105he.acs.calpoly.edu	3.0
+12.ts2.mnet.medstroms.se	975714.0
+120.233.med.umich.edu	13.0
+Task 3.3 results end
+
+Task 4.1 code begin
+
+###################################################################
+# Mapper
+# Uses xml.dom.minidom parser to parse the xml string
+# Forms a dict which can be used to access all attributes
+# Maintains a dict of max size 10 and updates it every time 
+# it sees a value greater than the min value in that dict
+###################################################################
+#!/usr/bin/python
+import sys
+import re
+from xml.dom.minidom import parseString
+
+#this job will parse the stackoverflow logs 
+def main():
+	most_pop_question_dict= {}
+	max_size = 10
+
+        for line in sys.stdin:
+                line = line.strip()
+		#Log content details######
+		stack_contents = dict( parseString(line).documentElement.attributes.items())
+		rowId = get_item(stack_contents, 'Id')
+		post_type_id = get_item(stack_contents, 'PostTypeId')
+
+		if post_type_id == '1': #question
+			view_count = int(get_item(stack_contents, 'ViewCount'))
+			if len(most_pop_question_dict.keys()) < max_size:
+				most_pop_question_dict[rowId] = view_count
+			elif view_count >= min(most_pop_question_dict.values()):
+                               	del most_pop_question_dict[min(most_pop_question_dict.items(), key=lambda x: x[1])[0]]
+                               	most_pop_question_dict[rowId] = view_count
+
+	emit(most_pop_question_dict)
+
+def get_item(my_dict, item):
+	if item in my_dict.keys():
+		return my_dict[item]
+
+def emit(most_pop_question_dict):
+        for item in most_pop_question_dict.keys():
+                print str(most_pop_question_dict[item]) + '\t' + item
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer - Does the same job as the mapper
+# Maintains a dict of max_size 10 which will be emitted at the end
+###################################################################
+#!/usr/bin/python
+
+import sys
+
+def main():
+        most_pop_question_dict = {}
+	max_size = 10
+        for line in sys.stdin:
+                line = line.strip()
+                view_count, rowId = line.split()
+                view_count = int(view_count)
+                if len(most_pop_question_dict.keys()) < 10:
+                        most_pop_question_dict[rowId] = view_count
+                elif view_count >= min(most_pop_question_dict.values()):
+                        del most_pop_question_dict[min(most_pop_question_dict.items(), key=lambda x: x[1])[0]]
+                        most_pop_question_dict[rowId] = view_count
+        emit(most_pop_question_dict)
+
+def emit(most_pop_question_dict):
+        for item in sorted(most_pop_question_dict, key=most_pop_question_dict.get, reverse=True):
+                print item + ',\t' + str(most_pop_question_dict[item])
+
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Bash script to run hadoop commands
+# Takes stackLarge as input
+# Runs on a single reducer as reducer input is small. Each
+# mapper will only send a max of 10 items to the reducer.
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=4.1
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/stackLarge.txt
+OUT_DIR=$HDP_DIR/output
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -D mapred.reduce.tasks=1 \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapMostPopQuestions.py \
+ -file mapMostPopQuestions.py \
+ -reducer reduceMostPopQuestions.py \
+ -file reduceMostPopQuestions.py \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID"
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR $LOCAL_DIR
+
+#copy the output to task dir
+hdfs dfs -rm $TASK_DIR/*
+hdfs dfs -cp $OUT_DIR/* $TASK_DIR
+
+echo "Done. check local output directory"
+
+Task 4.1 code end
+
+Task 4.1 results begin
+184618,	1782717
+503093,	1240007
+25969,	1075873
+194812,	1058604
+426258,	989328
+363681,	978463
+114543,	962440
+134845,	938463
+306583,	913899
+63447,	868645
+Task 4.1 results end
+
+Task 4.2 code begin
+
+###################################################################
+# This task is split up into two jobs.
+# Job 1 will be counting the answers per user
+# Job 2 will then find the max in this list
+###################################################################
+
+###################################################################
+# Mapper for Task 4.2 part 1
+# Emit the owner id and parent id
+# Once again, we parse the xml using xml.dom.minidom.parseString
+###################################################################
+#!/usr/bin/python
+import sys
+from xml.dom.minidom import parseString
+
+#this job will parse the stackoverflow logs 
+#output from this job will be used for 4.2 and 4.3
+def main():
+	most_pop_question_dict= {}
+	max_size = 10
+
+        for line in sys.stdin:
+                line = line.strip()
+		#resetting the variables we are going to be reading in
+		rowId = ''
+		post_type_id = ''
+		owner_user_id = ''
+		answer_id = ''
+		parent_id = ''
+		#Log content details######
+		stack_contents = dict( parseString(line).documentElement.attributes.items())
+
+		rowId = get_item(stack_contents, 'Id')
+		post_type_id = get_item(stack_contents, 'PostTypeId')
+		
+		if not rowId or not post_type_id:
+			raise ValueError
+
+		if post_type_id == '2': #answer
+			owner_user_id = get_item(stack_contents, 'OwnerUserId')
+			parent_id = get_item(stack_contents, 'ParentId')
+			if owner_user_id and parent_id:
+				emit(owner_user_id, parent_id, post_type_id)
+		del(stack_contents)
+
+
+def get_item(my_dict, item):
+	if item in my_dict.keys():
+		return my_dict[item];
+
+def emit(owner_user_id, post_id, post_type_id):
+	delim = '\t'
+	print owner_user_id + delim + post_id  + delim + '1'
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer - count the posts per owner and concat that list into a 
+# string.
+###################################################################
+#!/usr/bin/python
+
+import sys
+
+def main():
+	#set of vars for the answer section
+	prev_owner_id_a = ''
+	post_id_list_a = []
+	total_count_a = 0
+        for line in sys.stdin:
+                line = line.strip()
+                owner_user_id, post_id, count = line.split()
+                count = int(count)
+                if owner_user_id == prev_owner_id_a:
+                	total_count_a += count
+                        post_id_list_a.append(post_id)
+                else:
+                	if prev_owner_id_a:
+                        	emit(prev_owner_id_a, post_id_list_a, total_count_a)
+                        post_id_list_a = []
+			post_id_list_a.append(post_id)
+                        total_count_a = count
+                        prev_owner_id_a = owner_user_id
+
+	#last lines
+	emit(owner_user_id, post_id_list_a, total_count_a)
+
+
+def emit(owner_user_id, post_id_list, total_count):
+	post_id_string = ','.join(post_id_list)
+	delim = '\t'
+	print owner_user_id + delim + str(total_count) + delim + post_id_string
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Bash script to run the hadoop commands
+# Input is stackLarge. Output is saved for 2nd part of Task 4.2
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=4.1
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/stackLarge.txt
+RE_INP_DIR=$HDP_DIR/input/ex2/4_task/
+OUT_DIR=$HDP_DIR/output
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapUserQuestions.py \
+ -file mapUserQuestions.py \
+ -reducer reduceUserQuestions.py \
+ -file reduceUserQuestions.py \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID"
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR $LOCAL_DIR
+
+#copy to reinput dir for future tasks
+hdfs dfs -rm $RE_INP_DIR/*
+hdfs dfs -cp $OUT_DIR/part* $RE_INP_DIR
+
+#copy the output to task dir
+#hdfs dfs -rm $TASK_DIR/*
+#hdfs dfs -cp $OUT_DIR/* $TASK_DIR
+
+echo "Done. check local output directory"
+
+###################################################################
+# Mapper for task 4.2 part 2
+# This job simply maintains a top 1 and updates it as and when a
+# value exceeds it
+# Each mapper will only emit one output to the reducer
+###################################################################
+#!/usr/bin/python
+import sys
+
+def main():
+	max_count = 0
+	max_owner_id = ''
+	max_post_list = ''
+        for line in sys.stdin:
+                line = line.strip()
+		owner_user_id, count, post_list = line.split('\t')
+		count = int(count)
+		if count > max_count:
+			max_owner_id = owner_user_id
+			max_post_list = post_list
+			max_count = count
+	emit(max_owner_id, max_post_list, max_count)
+
+def emit(owner_user_id, post_list, count):
+	print owner_user_id + '\t' + post_list + '\t' + str(count)
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer to task 4.2 part 2
+# Again, maintains a top 1 and updates it when exceeded.
+# Can be run on a single reducer as output from mapper will be small
+###################################################################
+#!/usr/bin/python
+import sys
+
+def main():
+	max_count = 0
+	max_owner_id = ''
+	max_post_list = ''
+        for line in sys.stdin:
+                line = line.strip()
+		owner_user_id, post_list, count = line.split('\t')
+		count = int(count)
+		if count > max_count:
+			max_owner_id = owner_user_id
+			max_post_list = post_list
+			max_count = count
+	emit(max_owner_id, max_post_list, max_count)
+
+def emit(owner_user_id, post_list, count):
+	print owner_user_id + '\t->\t' + post_list
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Bash script for hadoop commands for task 4.2 part 2
+# Will take input from previous mapreduce job
+# will run on a single reducer as mappers will emit very small 
+# number of values to the reducer, so a single one should be able
+# handle it.
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=4.2
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/4_task/
+OUT_DIR=$HDP_DIR/output
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -D mapred.reduce.tasks=1 \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapMostAnswers.py \
+ -file mapMostAnswers.py \
+ -reducer reduceMostAnswers.py \
+ -file reduceMostAnswers.py \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID"
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR $LOCAL_DIR
+
+#copy the output to task dir
+hdfs dfs -rm $TASK_DIR/*
+hdfs dfs -cp $OUT_DIR/* $TASK_DIR
+
+echo "Done. check local output directory"
+
+Task 4.2 code end
+
+Task 4.2 results begin
+22656	->	640302,640307,596549,635640,538695,538729,558010,659529,538426,635841,635915,533171,618148,659148,618190,618182,525711,618216,557159,618267,618276,618292,557112,591632,658868,636046,658654,559254,559274,658644,591507,658614,618535,658506,538305,544249,538281,533332,556616,618835,618878,618909,560123,533042,556526,556510,559779,615377,615334,591273,618966,619033,538121,619087,615168,657735,619162,657685,657664,615105,619197,657573,541936,657503,526246,556310,636266,591144,657318,556265,619448,614713,657263,619434,657112,556203,614542,657037,656564,561365,619716,556133,561528,619856,561601,556006,619912,555982,590991,561762,555871,561853,555929,561891,620024,526555,656431,555796,656373,613699,620198,592824,555799,620234,656325,555750,592934,533379,656072,620376,592933,620484,620534,620546,532935,655803,593026,655751,655657,592064,591951,612753,612722,655328,655289,612689,634829,612592,533426,612486,564303,612283,654906,654858,654802,612253,654752,654715,564699,612178,564557,634777,564816,540248,654664,527234,654592,564938,612058,564935,564961,533464,565075,565095,621633,527259,634727,611433,532816,634693,634664,590231,554767,540430,611295,653882,590162,566167,566185,653730,653738,590122,653674,566411,566418,566437,540634,653634,653596,610870,537174,610818,589967,589966,610743,610732,566655,653469,610458,589943,610603,540708,589870,566860,653154,554345,540876,610229,610199,554044,527685,622710,554276,622743,610001,527766,622763,540947,610026,589774,609963,589737,554159,527819,536971,652512,553905,609501,527947,609293,623159,553857,593730,623243,623242,568616,527953,568671,568751,568724,568780,568852,593808,569109,536798,623451,528122,569245,651803,553536,569525,569522,532588,569614,651682,589351,569714,608542,637672,608530,569877,608525,569903,608453,651462,651419,651399,651350,570123,570153,623990,651283,541487,570231,624116,570302,570338,570376,624176,570452,570471,624217,528372,608057,608028,570535,570560,570578,651055,651032,536449,650898,553035,536435,594208,607587,545885,536396,594230,536378,594268,607377,552909,571265,637960,552857,552844,607130,606997,638038,594378,606902,649962,552612,638115,606642,649773,572647,606636,606524,638142,649471,625340,573026,573050,638171,649428,649320,552472,552421,573194,606109,573231,573325,625465,573384,638216,573439,625513,573539,605891,535972,573584,605859,573621,605828,573655,605726,573692,605682,625611,625640,638222,625687,573882,605526,605533,605498,528999,605441,605417,625928,625947,633656,648814,605215,626058,529088,648732,648692,626115,648700,626139,626132,626196,648576,648553,574019,626187,588319,626328,574787,574809,574824,574868,648196,648188,574972,648160,648115,648003,575202,535328,575173,575217,633585,535720,535531,647815,647779,626707,594923,604252,542766,535572,647499,626889,647453,626910,626924,647427,647425,647413,647403,542770,626935,551589,545671,603727,542915,551406,627172,595110,627267,627315,646794,576660,638701,646779,646750,646742,576740,576678,533831,627478,627507,576979,576912,577132,551173,551142,577280,551111,627730,627742,577358,577403,638828,547946,577427,595279,533767,543263,577749,543318,627982,638881,577868,628049,628119,602326,602279,578152,578211,645836,578231,595399,645826,529999,533858,645678,550702,601974,543473,645533,601804,533872,601674,601497,601436,639166,550571,533881,644715,550536,550143,579676,639292,545457,639320,644342,644267,533902,628843,644089,533922,600651,580590,595762,600607,580257,600525,580867,580887,643775,580896,545421,580905,629411,643694,595810,581318,581343,600022,534846,629712,581405,599976,643422,581448,629758,629798,581590,629804,534807,581714,581722,581730,629910,534793,643050,629955,581949,581967,549755,642933,582095,582122,549701,531976,534718,630045,582287,582284,534690,586436,549606,582550,582575,582725,586422,630464,630605,598702,586363,586352,534531,598640,549382,549274,642123,630808,642103,583123,642058,632606,548007,632570,642005,641931,641911,641906,583414,531315,631088,586284,531151,631099,641727,586262,597819,583944,586193,596065,584134,597788,586116,531380,631484,597675,597590,586087,631499,631550,586042,596339,631651,531520,586037,596367,631825,584549,632399,585031,631919,585969,632383,544991,640651,640613,631994,597012,544449,585306,585344,585372,585406,585860,596465,640522,640502,632148,640464,640415,531759,585725,388375,443310,515631,486948,473087,438492,519515,507747,523624,519520,521505,419554,468372,418983,468388,412839,483702,371987,386584,378118,412864,471693,468273,438431,384633,495616,500832,470311,445984,453879,442678,448320,468266,453451,503996,425226,520280,454218,464471,389993,454250,475843,519484,397760,520290,406253,453820,445915,370852,372033,478968,367905,515975,468062,448629,519461,490728,412380,412435,406293,413095,472137,448653,386544,475825,453738,475794,406351,490677,443687,374535,448258,495471,374014,510376,516882,406361,445883,365615,481314,428617,510319,431785,438715,378856,496096,392787,386500,390108,448206,481334,425132,406433,389813,431311,459560,386493,459554,506295,431839,510341,389822,370831,459538,370820,374553,371604,490860,490850,476163,504500,406463,438188,523431,413311,453538,506092,464731,490896,519914,503898,386741,434890,481211,525425,419796,476217,517751,453479,380885,479081,464831,464852,431967,431203,375940,453451,525413,446262,419788,521687,370801,464874,372639,443936,515269,488601,479105,448158,473998,502430,434888,392083,503877,464941,453359,443935,495273,375881,435729,464889,525364,502415,516788,446303,454870,449002,460223,443980,525319,374651,454891,495228,413597,469982,481714,481122,396621,510477,496472,481068,504103,431091,519324,523194,446320,374673,401415,476422,434761,444008,421851,510214,453186,453163,523359,513234,460300,406760,406791,411631,516309,421801,496704,460364,516768,419954,411592,375831,511477,411579,460371,434737,411572,401232,460404,421797,483333,480973,453059,513335,427217,368832,453023,516160,406830,411500,411515,411517,386341,469899,411478,434626,495004,516964,439086,411447,392135,465238,375544,506807,413825,452743,434666,406850,503789,380775,366852,428896,366332,452902,401945,442425,481846,500508,446462,481725,383551,366897,446474,488808,428924,455237,378259,424920,401348,366345,474057,446483,491375,380755,463302,463419,502346,418064,371702,365489,476534,419952,417954,380198,439166,474184,383775,387893,405600,491646,484562,417878,460562,504645,500431,374734,460576,511378,519929,455409,491735,455420,439255,395314,389426,399760,368170,439298,426505,370920,439302,483215,430403,507649,374790,391557,427363,478167,478150,380274,476676,504367,424775,524081,491780,407255,386183,399648,460698,424760,424743,524062,399768,465313,524066,519631,414290,395232,487682,508126,414328,460733,442924,478135,417699,417039,412763,460755,516689,370938,407402,446663,384511,465627,388353,388365,474259,380081,449760,465706,452281,452296,367814,460815,446706,399770,410692,410417,391462,497508,474315,446702,470724,460846,468832,479565,432833,469657,368806,463029,514564,417039,374215,497699,458518,393169,384489,399798,393152,520400,403088,458460,428001,374398,503139,522222,452120,470789,388431,388439,487485,511921,512527,380665,516399,439541,446835,414749,458225,477965,462793,487441,414746,462879,380639,489173,443010,468914,367823,510863,443000,403058,424586,462793,486420,427980,414896,433106,439617,374934,379041,520030,372075,396191,370501,405429,384247,507936,483054,370707,374940,442265,513672,380632,370401,371418,394921,417039,427941,472488,519645,462697,512401,433188,462699,394898,386088,492454,442245,427909,423247,385688,524351,450350,516637,410026,493947,470944,480389,407983,374316,424443,514833,380626,427902,387198,516617,482986,380595,474450,402936,470984,409969,420541,503218,374262,398378,480319,398117,392266,451647,520922,450410,439814,400866,386017,409852,514953,437026,492539,524428,385714,480263,409846,514948,430145,511093,503263,520064,400861,405379,474451,393701,409807,450463,408101,409765,450474,367577,457970,443466,409727,516463,486749,400100,409716,493673,433475,487258,400900,409611,420617,485240,524483,420623,524495,385709,371398,394957,510949,385688,443170,436954,524503,461439,456786,398170,444909,462348,377245,515787,377218,461475,434039,383735,396009,420646,367626,512166,508085,482466,439897,486784,477750,477101,433526,524567,489317,474535,450617,462311,408310,498636,405352,477351,388642,489304,415291,396005,379282,466946,385966,493490,372087,398212,439974,493494,512266,474841,519675,462167,405336,385730,482560,484212,506648,499393,405333,503383,405288,493388,390900,477399,443423,385809,440016,451228,474564,384401,456935,443239,385949,515590,487065,423794,443403,489485,436807,508054,457128,493311,375014,393322,420774,423840,447408,466841,447186,507343,520527,442022,466565,427799,429890,480033,388718,466560,436759,489258,371026,451099,427725,402517,420895,451078,436736,388822,423865,516569,461988,400022,499210,487046,396143,388708,457482,451035,384262,450820,466799,457287,436716,371930,385913,493033,420867,385841,476049,436700,451004,385893,479883,402430,479966,427756,408452,442019,508026,480007,493177,205138,509193,503427,380451,485398,425988,440204,380512,373541,388775,461893,324604,320542,229554,212028,339912,259726,293814,293882,325561,346313,293900,321549,313729,293905,320767,317606,209354,337925,253664,259751,293916,319789,268321,246389,358196,229656,229508,212614,313753,222245,301618,200574,337903,291828,321566,344034,202271,208753,271347,285292,319864,359320,304770,254784,289496,227820,270268,303502,198079,274585,271384,219851,355340,324656,285523,305651,263023,229797,219815,265370,285238,294138,253549,304782,269669,336649,355282,209389,229844,208532,317047,236676,289452,294171,349369,301510,330318,229886,294216,305755,235250,278075,324670,325511,340298,219618,327460,210123,268393,349410,301354,208381,301365,285177,219604,254260,301393,280634,219519,268251,335517,346762,302371,278039,317619,258567,256566,265585,352266,331217,355620,229886,236676,285087,294553,317026,269578,227731,280755,222182,212902,263151,225686,259887,346365,259900,324727,212089,261809,253492,313910,311710,324341,279374,311363,349460,225985,257462,325524,236878,327916,235455,312184,271767,349442,338895,317788,225717,312103,333655,259676,271404,259929,209281,333151,222457,209415,198419,317816,200691,359625,281970,284896,253468,243379,200319,200689,253757,355787,362955,339862,222511,201933,229346,265208,305911,210079,235025,208325,295005,320814,253460,295017,262480,314008,241537,200239,340128,306085,235446,224537,201930,352177,305519,291415,218888,269594,265147,288808,268530,295128,222601,343358,295110,266923,295161,291413,265639,336755,244826,269613,335450,284678,265097,265106,348175,198543,295224,273301,277869,295287,314033,340507,277857,271710,235003,324053,227575,287037,325725,218781,324066,304816,295387,333242,352234,237041,242225,242264,255063,295402,355933,266115,218744,227486,234994,208263,268513,234990,336781,241470,267059,271398,253399,355875,229254,291387,336775,302303,363549,362740,306212,242393,266292,346722,275073,263191,365086,295579,241405,295593,227485,362719,264984,262469,353131,200151,340546,295626,334779,338712,242400,236676,208193,312471,211958,268652,295670,336831,291340,200079,280896,208184,262367,346721,269578,280980,257519,241336,353491,210353,284093,295731,218461,258285,271440,277814,268671,295736,284336,295749,271615,210020,363596,213333,266308,287142,314100,291286,340525,348120,314108,334415,356091,348964,285793,222015,348122,346211,350991,278703,213045,343457,218322,330622,255098,281036,363569,241238,326648,200079,277783,362632,222819,230454,280439,278488,317462,320396,242904,287178,229211,241238,231159,254273,208119,314203,203863,222790,316911,230869,244811,362555,262547,266901,277732,208835,208124,287195,302476,269988,241148,225953,208876,359206,241134,214688,211958,285846,280426,240836,352415,203695,284063,333737,349280,343100,242517,267830,358546,218025,234591,277710,229076,327332,330155,204139,305393,208056,317084,244772,271613,217980,254784,242438,360241,238413,362441,231480,362424,301809,272368,213480,204208,258339,257331,207889,364009,236861,280114,251868,231525,352433,254099,217805,229015,293254,291080,333736,254096,238490,281210,293256,353028,212429,201607,228987,201616,204343,316855,302157,264718,343491,327286,217707,342270,207888,362278,228945,251937,362326,256077,213638,207896,263347,254099,270091,256065,217678,313584,246495,251946,217645,207889,242577,283749,238547,362224,360234,227083,283763,240863,240837,204468,309939,204505,238555,296650,281276,251987,343968,211143,321423,288794,231741,204564,252014,207867,231767,337744,264617,221691,283679,283669,296755,213637,296783,336884,204627,305358,200755,240638,289770,309734,200785,238583,317335,326757,309706,352472,212124,264575,362150,358645,283487,293114,240258,267765,254037,238606,296978,286632,207829,329029,242614,337702,349724,342268,283511,362124,352471,204739,263400,264496,283513,272153,349742,258988,321418,309631,362111,281325,283487,283492,283476,362112,255976,309553,359436,212429,329129,264196,271490,267076,221687,238660,300499,358654,341029,270148,262618,362059,300489,309496,254009,362042,344630,348037,283374,358894,343457,353224,243045,317134,286605,359732,344327,212401,238675,220887,364155,275944,317825,247621,208969,337038,337029,228796,300376,309286,286533,300402,201479,343366,272949,270093,223249,253673,356785,343869,340090,280127,304967,329203,290819,268013,347242,283241,242695,246498,246270,253226,347235,304640,343684,234379,253993,235003,225233,336387,347156,334838,243811,349256,359085,221001,221925,290602,283143,349251,207662,333829,342151,242718,326390,293007,352117,323235,221037,289845,204970,309161,316727,271520,323230,226967,292988,240219,234341,339792,255797,255813,323212,335807,205099,309071,305244,277319,232545,221001,352089,265919,337121,253211,356972,201440,352592,287551,232558,207592,232535,314779,211448,337144,339747,275944,308986,211477,216008,242745,276203,344363,258204,290645,343466,352618,258120,240122,308954,273949,318775,221824,271530,232732,288061,304389,276253,234239,287592,297471,221154,360151,333953,269058,323079,240090,266825,225194,287598,330963,232748,334579,234059,316674,261428,247455,240047,304483,334179,343852,213985,261387,271767,277351,232781,276319,272814,221804,280270,325267,214017,207521,205411,301960,223549,298139,232863,262096,277309,209304,268018,273949,342106,323032,272013,205458,266818,305140,270771,289307,257052,277211,325156,247241,342080,292265,278362,290527,321096,298277,344380,353342,337165,364986,308683,212263,298289,298305,276383,255645,253780,305154,233013,339755,239905,246572,315358,271561,316656,257045,255644,300055,345562,276472,244949,277260,338262,341848,350240,239888,344503,298458,239865,270747,287663,298503,255341,258691,292536,245058,205568,242930,277018,299987,233123,215458,221287,287684,292676,301965,214136,233081,282317,255341,286399,299950,215421,282468,304488,7074,308427,237159,277210,349192,255553,211567,349904,257251,302032,252257,237377,280172,287646,326820,326098,343675,252751,262110,262887,233216,223679,253058,337334,233207,265849,286481,234008,233243,326223,221378,333364,304859,330502,258486,341971,302096,233288,215213,302037,313036,358714,286508,299703,313062,333280,206198,263614,350120,359935,341847,233382,261028,201255,239645,313111,261062,290304,262089,253937,308061,233905,298972,244881,252775,361371,298976,215144,307984,337239,290061,233475,313127,334658,316582,266716,244192,239202,336414,339699,233850,290227,316532,287899,290238,252793,270187,316548,226664,299117,261126,360111,299135,246038,339952,252817,233579,299129,282099,278649,206512,282086,206539,246108,299515,206532,269310,252893,261086,281933,337254,270630,214814,214809,341949,225073,315139,246112,290189,299475,239306,282028,338024,246096,282037,269303,315146,341957,233711,245607,244135,261177,299439,266776,214584,274172,174585,157254,183315,186115,149211,179337,161477,137448,157055,197241,197302,186082,197297,164468,156369,151936,157219,190227,174662,145856,194676,183033,187633,156430,194450,176267,152613,157354,192121,186653,141423,161822,187695,154551,171332,174155,146204,194436,176264,186643,162571,162007,164643,194496,187742,131871,183685,157557,145509,156815,182749,163183,183473,178976,144516,161556,142003,153573,139837,178188,190936,187414,177835,155260,176196,187576,178888,196936,177373,177836,164192,162879,139592,181643,182683,177538,143997,185690,183479,187989,162335,177363,185072,9033,194464,154680,169378,197005,185124,193731,155458,169220,178255,194304,153048,193873,195606,192599,187983,185987,154112,178026,139260,155209,188120,176106,191153,188134,188141,154489,161633,191151,181427,194528,155378,144176,148078,174498,161942,187289,152900,188184,188864,186891,148298,182600,171664,139592,188977,164144,162112,173080,148074,168393,186385,196094,143947,162727,171717,146155,197482,187602,161231,161432,168169,164369,145371,191333,183250,162303,173272,157198,159705,190299,137688,190376,149233,148882,141467,168150,178333,194165,162696,182440,183367,188769,186467,183856,197174,186007,197182,154483,178516,186964,154463,186527,155780,186523,161184,144783,152313,177506,187068,146358,188693,164425,188688,137454,188510,186600
+Task 4.2 results end
+
+Task 4.3 code begin
+
+###################################################################
+# Task 4.3 is split up into 3 parts
+# Part 1 will join the AcceptedAnswerId from each question to the rowId
+# from each answer. It will output the owner id and row id
+# Part 2 will sum up the count of row ids for each owner id
+# Part 3 will find the top count among all owner ids
+###################################################################
+
+###################################################################
+# Mapper - task 4.3 part 1
+# emits the answer_id along with an identifier ('ANSWER_ID') for 
+# each question. And it will also emit the row id and owner id
+# for each answer.
+# Works on the princile that hadoop will sort the output for the
+# reducer according to the first column which will be rowId/ answerId
+# if rowId == answerId, they will come in sorted manner to the reducer
+# one after the other. Thus we can pick out the joins
+###################################################################
+#!/usr/bin/python
+import sys
+import re
+from xml.dom.minidom import parseString
+
+def main():
+
+        for line in sys.stdin:
+                line = line.strip()
+		#resetting the variables we are going to be reading in
+		rowId = ''
+		post_type_id = ''
+		answer_id = ''
+		#Log content details######
+		stack_contents = dict( parseString(line).documentElement.attributes.items())
+		rowId = get_item(stack_contents, 'Id')
+		post_type_id = get_item(stack_contents, 'PostTypeId')
+		#print stack_contents
+		if post_type_id == '1':#question
+			answer_id = get_item(stack_contents,'AcceptedAnswerId')
+			if answer_id:
+				emit(answer_id, 'ANSWER_ID')
+		elif post_type_id == '2': #answer
+			owner_id = get_item(stack_contents, 'OwnerUserId')
+			if owner_id and rowId:
+				emit(rowId, owner_id)
+		del(stack_contents)
+
+def get_item(my_dict, item):
+	if item in my_dict.keys():
+		return my_dict[item];
+
+def emit(post_id, val):
+	print post_id + '\t' + val
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer - Task 4.3 part 1
+# reducer will assume hadoop has sorted the mapper output in terms
+# of first col (rowid/ answerid). It will then check for repeats
+# in the rowId to check if answers have a matching question or not
+# will emit the owner id and row id found to match
+###################################################################
+#!/usr/bin/python
+import sys
+import re
+
+def main():
+	prev_row_id = ''
+	prev_val = ''
+        for line in sys.stdin:
+                line = line.strip()
+		row_id, val = line.split()
+		if row_id == prev_row_id:
+			if prev_val == 'ANSWER_ID':
+				emit(val, row_id)
+			else:
+				emit(prev_val, prev_row_id)
+		else:
+			prev_row_id = row_id
+			prev_val = val
+
+def emit(val, row_id):
+	print val + '\t' + row_id + '\t' + '1'
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Bash script for hadoop commands for task 4.3 part 1
+# Will run on stackLarge and save the output for 4.3 part 2
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=4.3
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/stackLarge.txt
+RE_INP_DIR=$HDP_DIR/input/ex2/4_3_task/
+OUT_DIR=$HDP_DIR/output
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapAcceptedAnswers.py \
+ -file mapAcceptedAnswers.py \
+ -reducer reduceAcceptedAnswers.py \
+ -file reduceAcceptedAnswers.py \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID"
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR $LOCAL_DIR
+
+#copy to reinput dir for future tasks
+hdfs dfs -rm $RE_INP_DIR/*
+hdfs dfs -cp $OUT_DIR/part* $RE_INP_DIR
+
+echo "Done. check local output directory"
+
+###################################################################
+# Mapper - task 4.3 part 2
+# This job will count up the row ids per owner id
+# Both mapper and reducer will perform the count
+###################################################################
+#!/usr/bin/python
+
+import sys
+
+def main():
+	prev_owner_id = ''
+	total_count = 0
+	rowIdList = []
+	for line in sys.stdin:
+		line = line.strip()
+		owner_id, rowId, count = line.split()
+		count = int(count)
+		if owner_id == prev_owner_id:
+			total_count += count
+			rowIdList.append(rowId)
+		else:
+			if prev_owner_id:
+				emit(prev_owner_id, total_count, rowIdList)
+			total_count = count
+			rowIdList = []
+			rowIdList.append(rowId)
+			prev_owner_id = owner_id
+	emit(prev_owner_id, total_count, rowIdList)
+
+def emit(owner_user_id, total_count, rowIdList ):
+	row_id_string = ','.join(rowIdList)
+	delim = '\t'
+	print owner_user_id + delim + str(total_count) + delim + row_id_string
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer - task 4.3 part 2
+# Will count up the row ids per owner id
+# will also concat the row ids into a comma sep string
+###################################################################
+#!/usr/bin/python
+
+import sys
+
+def main():
+	prev_owner_id = ''
+	total_count = 0
+	row_id_list = ''
+	for line in sys.stdin:
+		line = line.strip()
+		owner_id, count, row_id_string  = line.split()
+		count = int(count)
+		if owner_id == prev_owner_id:
+			total_count += count
+			row_id_list += ',' + row_id_string
+		else:
+			if prev_owner_id:
+				emit(prev_owner_id, total_count, row_id_list)
+			total_count = count
+			row_id_list = row_id_string
+			prev_owner_id = owner_id
+	emit(prev_owner_id, total_count, row_id_list)
+
+def emit(owner_user_id, total_count, row_id_list ):
+	delim = '\t'
+	print owner_user_id + delim + str(total_count) + delim + row_id_list
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Bash script for hadoop commands for task 4.3 part 2
+# Will use the output from the previous job as input
+# Will save the output from this job for the next part
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=4.3
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/4_3_task/
+RE_INP_DIR=$HDP_DIR/input/ex2/4_3_2_task/
+OUT_DIR=$HDP_DIR/output
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapAcceptedCount.py \
+ -file mapAcceptedCount.py \
+ -reducer reduceAcceptedCount.py \
+ -file reduceAcceptedCount.py \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID"
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR $LOCAL_DIR
+
+#copy to reinput dir for future tasks
+hdfs dfs -rm $RE_INP_DIR/*
+hdfs dfs -cp $OUT_DIR/part* $RE_INP_DIR
+
+echo "Done. check local output directory"
+
+###################################################################
+# Mapper - task 4.3 part 3 - the final reduction
+# This job will find the top owner id in terms of count from the 
+# entire list. will maintain a top 1 and keep updating it as 
+# it is exceeded. Similar to other max functions
+###################################################################
+#!/usr/bin/python
+import sys
+
+def main():
+	max_count = 0
+	max_owner_id = ''
+	max_post_list = ''
+        for line in sys.stdin:
+                line = line.strip()
+		owner_user_id, count, post_list = line.split('\t')
+		count = int(count)
+		if count > max_count:
+			max_owner_id = owner_user_id
+			max_post_list = post_list
+			max_count = count
+	emit(max_owner_id, max_post_list, max_count)
+
+def emit(owner_user_id, post_list, count):
+	print owner_user_id + '\t' + str(count) + '\t' +  post_list
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Reducer - task 4.3 part 3 - the final reduction
+# Will run on a single reducer and emit the top value found
+# Since mappers are going to reduce the data first, it is ok to 
+# run on a single reducer.
+###################################################################
+#!/usr/bin/python
+import sys
+
+def main():
+	max_count = 0
+	max_owner_id = ''
+	max_post_list = ''
+        for line in sys.stdin:
+                line = line.strip()
+		owner_user_id, count, post_list = line.split('\t')
+		count = int(count)
+		if count > max_count:
+			max_owner_id = owner_user_id
+			max_post_list = post_list
+			max_count = count
+	emit(max_owner_id, max_post_list, max_count)
+
+def emit(owner_user_id, post_list, count):
+	print owner_user_id + '\t->\t' + str(count) + ',\t' +  post_list
+
+if __name__ == '__main__':
+        main()
+
+###################################################################
+# Bash script to run hadoop commands
+# Input is taken from the previous job output.
+# Output will be the top owner id in tersm to accepted answers
+# Will run on a single reducer as mapper output is small enough
+# and it is the only way to get a single max.
+###################################################################
+#!/bin/bash
+
+#variable
+TASK_ID=4.3
+TASK_DIR=/user/$USER/ex2/task_$TASK_ID.out
+HDP_DIR=/user/$USER/data
+INP_FILES=$HDP_DIR/input/ex2/4_3_2_task/
+OUT_DIR=$HDP_DIR/output
+LOCAL_DIR=./
+
+rm -R $LOCAL_DIR/output
+hdfs dfs -rm -R $OUT_DIR
+
+hadoop jar /opt/hadoop/hadoop-2.7.1/share/hadoop/tools/lib/hadoop-streaming-2.7.1.jar \
+ -D mapred.reduce.tasks=1 \
+ -input $INP_FILES \
+ -output $OUT_DIR \
+ -mapper mapMostAccepted.py \
+ -file mapMostAccepted.py \
+ -reducer reduceMostAccepted.py \
+ -file reduceMostAccepted.py \
+ -jobconf mapred.job.name="Job_S1567343_ex2_task_$TASK_ID"
+
+#Copy the output to local dir
+hdfs dfs -copyToLocal $OUT_DIR $LOCAL_DIR
+
+#copy to reinput dir for future tasks
+#hdfs dfs -rm $RE_INP_DIR/*
+#hdfs dfs -cp $OUT_DIR/part* $RE_INP_DIR
+
+#copy the output to task dir
+hdfs dfs -rm $TASK_DIR/*
+hdfs dfs -cp $OUT_DIR/* $TASK_DIR
+
+echo "Done. check local output directory"
+
+Task 4.3 code end
+
+Task 4.3 results begin
+22656	->	1097,	427370,618927,236705,536996,499407,370580,317034,499218,370742,370828,370936,538714,371525,540649,496167,186003,495622,327312,374801,542791,534826,235459,266301,375837,545437,235067,377259,377263,330363,533836,239252,378140,489548,489421,489386,549618,549762,233492,197191,169872,254908,556039,503839,232803,519530,362804,483067,533066,362732,362453,198136,532841,308962,333671,532607,240665,477406,388793,657703,474585,474468,360180,474288,474198,229023,161965,656114,264740,568789,654756,654684,470976,570493,570588,396159,469978,531338,650921,251974,305163,305168,187048,337366,573445,304821,304664,304484,256636,178197,465648,576762,227598,577365,464851,227525,204354,578242,648122,647795,463078,257059,580794,241380,246529,302378,580910,338761,400888,581432,581464,154710,582567,460350,530014,257252,644757,402944,644095,583958,263633,457999,257540,642970,585415,183696,225077,457084,641944,246394,586397,406841,207711,640517,407417,640323,640350,454299,299526,453920,246114,512550,208756,209002,410684,450856,223709,353435,450482,594276,595298,636062,325161,258585,596396,597660,324090,188993,414315,446671,600016,295160,344340,344377,511489,352210,284905,212094,242910,212283,630635,244805,212512,285184,524106,293897,293919,439633,605787,439584,439232,213403,606641,213651,626964,286520,420633,626207,626121,510953,243054,346735,609981,259732,434697,423806,525420,219001,259985,433116,291114,613738,290656,290340,288802,218485,430709,324356,620519,619859,348977,618161,398155,309766,208150,468873,566180,466974,646780,210139,313590,465731,465281,647432,464971,464886,569920,164398,316925,462725,570347,570365,461465,162750,560131,460858,213582,302317,321104,302038,644287,476554,300409,300418,325308,300008,325542,627213,556622,205117,326104,455417,573628,620544,298287,298313,620396,217691,574659,329106,217993,204744,330177,330640,451696,651338,481350,481724,651428,156838,333840,552478,295627,552469,483001,295145,483231,651824,221209,294259,336838,577430,337143,293908,446499,446476,293269,578222,292747,154524,652580,339894,340554,341062,443956,579721,443433,341977,342016,443258,443203,289520,289363,343380,343691,343862,344055,225255,653183,344555,346085,346215,346346,439311,225967,225994,151950,286613,286645,349267,349384,614587,490909,285849,227569,543329,629428,436738,582137,542933,200784,542852,229134,655311,229558,353154,541506,229670,493055,629833,655668,493735,355300,493956,612700,431319,495012,281285,232621,657175,428624,585373,280236,639328,360255,234016,234395,657585,234999,362640,277767,237685,609529,198576,275129,533339,532952,182767,272960,239903,638121,272393,589950,503387,590237,608043,504683,374426,141528,271529,374750,375074,375803,270106,631560,592078,414764,413864,508094,508157,631934,528411,605866,139841,605776,527778,411523,186155,266764,266282,265599,383782,264478,384335,384416,384529,524578,524514,188130,263177,251904,261813,252831,389871,390072,390158,520568,597686,253619,259695,253795,391576,190254,190308,598063,254109,519682,519506,400908,393173,514768,394960,400039,395306,399811,255072,396026,516897,516581,516342,256085,435045,583440,280167,280293,280446,281049,600571,282548,601485,478177,448661,601813,247623,286445,604293,246101,577451,605544,605832,244838,576795,244153,242763,241291,239663,574814,239316,424612,238669,573568,479095,610674,233943,296985,233303,570606,233236,569554,300074,300493,612267,230063,229849,229006,614738,305362,564973,306131,495281,615115,308689,309791,309944,473122,313115,221941,221383,480039,314010,618202,315186,619210,440047,213710,480313,557133,319911,472506,452945,209319,555955,438739,324078,417485,453188,208202,325739,327462,481079,550586,624151,624192,453557,624223,206227,419807,493517,333217,547968,625538,204508,334595,334815,436957,436817,545483,545064,627757,454312,339798,339937,200165,340174,481853,340566,200142,632003,194514,194307,193740,192615,346772,253473,493387,348045,191189,191170,434963,538751,538508,350178,351032,352441,536451,634867,186667,186685,535731,434053,493201,534570,356118,533878,359449,361397,421868,362332,182620,364024,527965,366905,639196,178990,524436,370842,371508,372061,485296,644366,168414,645833,458417,646805,516999,647502,430160,385814,385972,514964,468934,648169,388834,486781,512335,163261,423875,511223,392096,161565,491591,161484,507958,157213,464861,428956,399774,506184,269070,153744,487695,403070,503434,460824,656336,657696,144069,141468,427993,409722,409876,589778,265885,263080,475828,261073,271928,595415,273318,256079,586280,255638,255656,276455,277873,254053,197247,656387,658669,658713,569253,453071,371946,372648,585313,630826,638049,373804,638233,349428,221852,245077,344635,344400,221695,635664,342272,568655,146167,549714,528172,241670,449035,479983,340526,556522,448635,481237,448333,631672,586105,338042,648818,569541,447429,569627,370811,370942,454895,241143,654735,628072,446722,597045,336797,336396,631834,445886,164455,627767,173333,640537,215462,648106,648192,252790,252803,598738,333254,385851,555979,556009,386099,487097,591979,214693,653907,632162,164270,627514,528041,254333,352631,488816,213450,388448,329209,329141,283269,490863,600667,196117,626367,326667,626150,657156,642030,642116,456811,261146,320834,262631,436764,436773,263257,208221,498644,208136,231536,318698,288827,657214,435797,396011,633602,264643,605338,317608,265214,316659,396629,643110,316578,367923,183260,605554,265994,161787,398217,314831,367829,227833,623211,314138,204581,466815,606549,312275,651062,622749,659177,311717,537190,204009,606913,268536,268662,268699,607147,506310,309076,565054,536461,507904,269625,186550,186613,308040,590137,358653,535782,509290,419975,270173,535651,270641,510388,608470,305764,290063,358716,589940,359215,305412,427737,511413,201449,271415,271447,271645,366339,366352,534850,512471,589805,573217,187432,359634,302492,187793,302172,426008,570170,188017,413106,290216,188148,554308,459566,533888,552850,552887,533473,300511,620246,610837,299979,533289,274615,299177,277266,619108,295748,619013,649786,295248,519537,295040,612772,462733,531772,520413,635934,294145,279395,293907,531321,293268,278521,292994,567223,411586,618596,412774,618226,232616,265130,586440,265031,317097,612067,314130,355806,363582,363627,242586,271575,281358,211161,234751,355644,444000,591165,510358,538295,340028,442480,586210,305257,442282,538227,295597,291357,388742,520046,480357,641916,287627,612193,356977,285101,285368,619461,295754,380786,287217,551600,341865,219654,222079,287190,309636,388369,388378,457146,266319,263416,342099,516636,272164,182696,282113,439925,266846,330533,214712,309005,195615,503928,182515,301977,513684,640692,602342,439317,353065,420894,585897,280160,399772,654868,302129,620225,577300,253962,472153,557186,197181,460390,254010,523368,523449,267089,371736,362443,352421,477333,197299,460746,513346,618886,144189,352133,514840,315369,343507,343552,262101,296780,296794,146227,181462,638848,362119,176274,343886,209448,413329,379058,267836,626936,221322,631552,552915,164650,276255,611315,312277,405733,255113,261067,462023,333404,448272,540530,496620,411597,323220,323261,288090,293891,462235,588330,527837,378266,424453,475830,555818,493420,365017,268600,304541,337171,177561,531986,490739,208683,233149,533420,533448,468392,493501,177840,425245,406359,255834,590166,566659,540887,618192,336433,162774,272830,640426,349736,144085,593799,594973,385727,201630,277790,245006,359339,349259,649611,145516,409982,392800,533907,394948,298332,293143,386267,393179,474859,580702,324616,324661,201266,427919,615389,466574,283491,453370,474480,534802,521144,395320,258219,193879,564845,283676,564949,375926,610767,258999,313069,313131,162323,580928,386514,258499,581355,269320,269325,285809,543500,309528
+Task 4.3 results end
+
